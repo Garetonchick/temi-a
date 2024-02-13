@@ -8,6 +8,7 @@ from pathlib import Path
 import torch
 from torch.backends import cudnn
 from tqdm import tqdm
+import numpy as np
 
 from eval_cluster_utils import knn_classifier
 from loaders import get_dataset
@@ -59,16 +60,27 @@ def get_outpath(arch, dataset, datapath='data'):
     dataset = dataset.replace('/', '_')
     return datapath / 'embeddings' / f'{dataset}-{arch}'
 
+def load_dcase_embeddings(datapath):
+    embeddings = np.load(datapath / 'pretrained_passt_features.npy')
+    labels = np.load(datapath / 'labels.npy')
+    return torch.from_numpy(embeddings), torch.from_numpy(labels)
 
 def get_nn(args, preprocess, model, test=False):
     datapath = './data' if  args.dataset in ["CIFAR10", "CIFAR100", "STL10", "CIFAR20"] else args.datapath
-    dset = get_dataset(args.dataset, datapath=datapath, train=not test, transform=preprocess, download=True)
-    dataloader = torch.utils.data.DataLoader(dset, batch_size=args.batch_size, shuffle=False, drop_last=False, pin_memory=True, num_workers=16)
-    embeddings, label = compute_embedding(model, dataloader)    
+    embeddings, label = None, None
+    n_classes = 0
+    if args.dataset == "DCASE2018_TASK5":
+        embeddings, label = load_dcase_embeddings(datapath)
+        n_classes = label.unique().size
+    else:
+        dset = get_dataset(args.dataset, datapath=datapath, train=not test, transform=preprocess, download=True)
+        dataloader = torch.utils.data.DataLoader(dset, batch_size=args.batch_size, shuffle=False, drop_last=False, pin_memory=True, num_workers=16)
+        embeddings, label = compute_embedding(model, dataloader)    
+        n_classes = len(dset.classes)
     embeddings = embeddings.squeeze()
-    k = args.k or len(dset) // len(dset.classes)
+    k = args.k or embeddings.shape[0] // n_classes 
     nn_dists, neighbors = compute_neighbors(embeddings, k)
-    return embeddings, label, nn_dists, neighbors, len(dset.classes)
+    return embeddings, label, nn_dists, neighbors, n_classes 
 
 def compute_stats(outpath):
     for test in True, False:
@@ -133,7 +145,7 @@ def main(args):
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--dataset', default='CIFAR100', choices=['CIFAR100', 'CIFAR10', "STL10", \
-                                                                "CIFAR20", "IN1K", "IN50", 'IN100', "IN200", "IN1K"], type=str)
+                                                                "CIFAR20", "IN1K", "IN50", 'IN100', "IN200", "IN1K", "DCASE2018_TASK5"], type=str)
     parser.add_argument('--arch', default='clip_ViT-B/32')
     parser.add_argument('--outpath', type=Path, default=Path('data'))
     parser.add_argument('--temperature', default=0.02, type=float,
