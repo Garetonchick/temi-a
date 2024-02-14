@@ -6,7 +6,6 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 import torch
-from torch.backends import cudnn
 from tqdm import tqdm
 import numpy as np
 
@@ -60,23 +59,23 @@ def get_outpath(arch, dataset, datapath='data'):
     dataset = dataset.replace('/', '_')
     return datapath / 'embeddings' / f'{dataset}-{arch}'
 
-def load_dcase_embeddings(datapath):
+def load_embeddings(datapath):
     datapath = Path(datapath)
-    embeddings = np.load(datapath / 'pretrained_passt_features.npy')
+    embeddings = np.load(datapath / 'embeddings.npy')
     labels = np.load(datapath / 'labels.npy')
     label_translation = {text: i for i, text in enumerate(set(labels))}
     labels = np.array([label_translation[text] for text in labels])
     return torch.from_numpy(embeddings), torch.from_numpy(labels)
 
 def get_nn(args, preprocess, model, test=False):
-    datapath = './data' if  args.dataset in ["CIFAR10", "CIFAR100", "STL10", "CIFAR20"] else args.datapath
+    datapath = args.datapath
     embeddings, label = None, None
     n_classes = 0
-    if args.dataset == "DCASE2018_TASK5":
-        embeddings, label = load_dcase_embeddings(datapath)
+    if args.only_knn:
+        embeddings, label = load_embeddings(datapath)
         n_classes = label.unique().shape[0]
     else:
-        dset = get_dataset(args.dataset, datapath=datapath, train=not test, transform=preprocess, download=True)
+        dset = get_dataset(args.dataset, datapath=datapath, train=not test)
         dataloader = torch.utils.data.DataLoader(dset, batch_size=args.batch_size, shuffle=False, drop_last=False, pin_memory=True, num_workers=16)
         embeddings, label = compute_embedding(model, dataloader)    
         n_classes = len(dset.classes)
@@ -93,8 +92,7 @@ def compute_stats(outpath):
         torch.save(embeddings.std(dim=0), outpath / f'std{test_str}.pt')
 
 def main(args):
-    cudnn.benchmark = True
-    cudnn.deterministic = True
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     modelname = args.arch
 
     outpath = get_outpath(modelname, args.dataset)
@@ -103,8 +101,9 @@ def main(args):
         return
 
     model, preprocess = load_model(args, head=False)
-    model = model.cuda()
-    model.eval()
+    if model is not None:
+        model = model.to(device)
+        model.eval()
 
     outpath.mkdir(parents=True, exist_ok=True)
 
@@ -141,21 +140,21 @@ def main(args):
         with open(outpath / 'accuracy.json', 'w') as f:
             json.dump({'top1': top1, 'top5': top5}, f)
     # empty gpu memory
-    model = model.cpu()
-    del model
+    if model is not None:
+        model = model.cpu()
+        del model
 
 
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument('--dataset', default='CIFAR100', choices=['CIFAR100', 'CIFAR10', "STL10", \
-                                                                "CIFAR20", "IN1K", "IN50", 'IN100', "IN200", "IN1K", "DCASE2018_TASK5"], type=str)
-    parser.add_argument('--arch', default='clip_ViT-B/32')
+    parser.add_argument('--dataset', default='DCASE2018_TASK5', choices=["DCASE2018_TASK5"], type=str)
+    parser.add_argument('--arch', default='PaSST')
+    parser.add_argument('--only_knn', action='store_true', help='Compute knn for existing embeddings', default=False)
     parser.add_argument('--outpath', type=Path, default=Path('data'))
     parser.add_argument('--temperature', default=0.02, type=float,
                         help='Temperature used in the voting coefficient')
     parser.add_argument('--classifier-k', default=20, type=int, help='Numbers of neighbors to use in the classifier')
     parser.add_argument('-k', type=int, default=None, help='total NNs to compute. Default: num images / num classes')
-    parser.add_argument('--vit_image_size', type=int, default=224)
     parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--datapath', default='./data', type=str)
     parser.add_argument('--no_eval_knn', action='store_true', help='Do not evaluate k-nn accuracy', default=False)
@@ -163,3 +162,6 @@ if __name__ == '__main__':
                         help='Only compute the mean and std of the dataset for precomputed embeddings')
 
     main(parser.parse_args())
+
+
+# python gen_embeds.py --arch PaSST --dataset DCASE2018_TASK5 --datapath data/DCASE_TASK5-PaSST --only_knn --no_eval_knn

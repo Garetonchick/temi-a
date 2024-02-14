@@ -86,11 +86,6 @@ def get_args_parser():
         ensures that aux samples have same resolution as in-dist samples""")
     parser.add_argument('--aug_image_size',type=int, default=None,
                        help='Image size for data augmentation. If None, use vit_image_size')
-    from augs.augs import IMAGE_AUGMENTATIONS, EMBED_AUGMENTATIONS
-    parser.add_argument('--image_aug', choices=IMAGE_AUGMENTATIONS.keys(), default='randaug',
-                        help='Augmentation for images')
-    parser.add_argument('--embed_aug', choices=EMBED_AUGMENTATIONS.keys(), default='none',
-                        help='Augmentations for precomputed embeddings. Only used when --precomputed flag is given')
     parser.add_argument('--aug_args', type=kv_pair, nargs='*', default={})
     parser.add_argument('--num_augs', type=int, default=1)
 

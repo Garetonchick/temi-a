@@ -1,3 +1,2 @@
-from .embedNN import EmbedNN, get_dataset, TruePosNN
-from .cifar20 import CIFAR20
-from .imagenet import *
+from .embedNN import get_dataset
+from .dcase2018_task5 import DCASE2018_TASK5
