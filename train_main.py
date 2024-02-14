@@ -314,7 +314,8 @@ def train_one_epoch(student_teacher_model, dino_loss, data_loader,
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(wd=optimizer.param_groups[0]["weight_decay"])
         if utils.is_main_process():
-            writer.add_scalar("Train loss step", loss, it)
+            print(f"Train step = {it}, loss = {loss}")
+            # writer.add_scalar("Train loss step", loss, it)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -326,16 +327,20 @@ def train_one_epoch(student_teacher_model, dino_loss, data_loader,
 
     if utils.is_main_process():
         if args.num_heads == 1:
-            writer.add_scalar("Train loss epoch", torch.Tensor([metric_logger.meters['loss'].global_avg]), epoch)
+            # writer.add_scalar("Train loss epoch", torch.Tensor([metric_logger.meters['loss'].global_avg]), epoch)
+            print(f"Train epoch = {epoch}, epoch_loss = {metric_logger.meters['loss'].global_avg}")
         else:
             avg_loss = metric_logger.meters['head_losses'].global_avg
-            writer.add_scalars("Train loss epoch",
-                               {f"head{i}": loss for i, loss in enumerate(avg_loss)},
-                               epoch)
+            print(f"Train epoch = {epoch}");
+            for i, loss in enumerate(avg_loss):
+                print(f"Head {i} loss = {loss}")
+            #writer.add_scalars("Train loss epoch",
+            #                   {f"head{i}": loss for i, loss in enumerate(avg_loss)},
+            #                   epoch)
 
         d_loss = dino_loss[0] if hasattr(dino_loss, "__getitem__") else dino_loss
-        if hasattr(d_loss, 'probs_pos'):
-            writer.add_histogram("p(k) over Epochs", d_loss.probs_pos, epoch)
+        # if hasattr(d_loss, 'probs_pos'):
+            # writer.add_histogram("p(k) over Epochs", d_loss.probs_pos, epoch)
     print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.scalar_meters.items()}
 
@@ -363,8 +368,8 @@ def main():
 
     make_out_dir(args)
     writer = None
-    if utils.is_main_process():
-        writer = SummaryWriter(args.output_dir)
+    # if utils.is_main_process():
+    #     writer = SummaryWriter(args.output_dir)
     with open(os.path.join(args.output_dir, "hp.json"), 'wt') as f:
         json.dump(vars(args), f, indent=4, default=str)
     train_dino(args, writer)

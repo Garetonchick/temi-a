@@ -61,8 +61,11 @@ def get_outpath(arch, dataset, datapath='data'):
     return datapath / 'embeddings' / f'{dataset}-{arch}'
 
 def load_dcase_embeddings(datapath):
+    datapath = Path(datapath)
     embeddings = np.load(datapath / 'pretrained_passt_features.npy')
     labels = np.load(datapath / 'labels.npy')
+    label_translation = {text: i for i, text in enumerate(set(labels))}
+    labels = np.array([label_translation[text] for text in labels])
     return torch.from_numpy(embeddings), torch.from_numpy(labels)
 
 def get_nn(args, preprocess, model, test=False):
@@ -71,7 +74,7 @@ def get_nn(args, preprocess, model, test=False):
     n_classes = 0
     if args.dataset == "DCASE2018_TASK5":
         embeddings, label = load_dcase_embeddings(datapath)
-        n_classes = label.unique().size
+        n_classes = label.unique().shape[0]
     else:
         dset = get_dataset(args.dataset, datapath=datapath, train=not test, transform=preprocess, download=True)
         dataloader = torch.utils.data.DataLoader(dset, batch_size=args.batch_size, shuffle=False, drop_last=False, pin_memory=True, num_workers=16)

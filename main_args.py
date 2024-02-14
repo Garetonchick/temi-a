@@ -97,7 +97,8 @@ def get_args_parser():
     parser.add_argument('--pretrained_weights', default='', type=str)
     parser.add_argument('--knn_path', default=None, type=str)
     parser.add_argument('--dataset', default='CIFAR100',
-                        choices=['CIFAR100', 'CIFAR10', "STL10", "CIFAR20", "IN1K", "IN50", 'IN100', "IN200"],
+                        choices=['CIFAR100', 'CIFAR10', "STL10", "CIFAR20", "IN1K", "IN50", 'IN100', "IN200", 
+                                 "DCASE2018_TASK5"],
                         type=str)
     parser.add_argument('--knn', type=int, default=50, help='Number of nearest neighbors to use')
 

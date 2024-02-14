@@ -67,7 +67,7 @@ def main():
         args.__dict__.update({k: v for k, v in hparams.items() if v is not None})
 
     # Load loss history
-    losses_df = load_tensorboard_loss(outdir)
+    # losses_df = load_tensorboard_loss(outdir)
 
     # replace last saved checkpoint name to be last
     checkpoint_list = list(map(lambda st: str.replace(st, "checkpoint.pth", "checkpoint9999.pth"), checkpoint_list))
@@ -110,11 +110,11 @@ def main():
         cluster_results["ari-train"].append(ari)
 
         # Loss
-        if epoch in losses_df.index:
-            train_loss = losses_df.loc[epoch].item()
-            loss_results["train_loss"].append(train_loss)
-        else:
-            loss_results["train_loss"].append(np.nan)
+        # if epoch in losses_df.index:
+        #     train_loss = losses_df.loc[epoch].item()
+        #     loss_results["train_loss"].append(train_loss)
+        # else:
+        #     loss_results["train_loss"].append(np.nan)
 
         print('\n', '-'*100, '\n')
 
