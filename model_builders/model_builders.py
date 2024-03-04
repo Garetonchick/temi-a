@@ -51,7 +51,7 @@ def load_model(config, head=True):
         # Just get everything via reflection
         mmc_params = inspect.signature(MultiHeadClassifier).parameters
         mmc_args = {k: v for k, v in config.__dict__.items() if k in mmc_params}
-        model = MultiHeadClassifier(None, **mmc_args)
+        model = MultiHeadClassifier("PaSST", **mmc_args)
 
         if config.embed_norm:
             model.set_mean_std(*load_embed_stats(config, test=False))

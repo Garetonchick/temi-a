@@ -121,7 +121,7 @@ def get_args_parser():
 
     add_from_signature(parser, MultiHeadClassifier, "MultiHeadClassifier")
 
-    parser.add_argument('--disable_ddp', default=False, action='store_true', help="Don't use DDP")
+    parser.add_argument('--disable_ddp', default=True, action='store_true', help="Don't use DDP")
 
     precomputed_group = parser.add_mutually_exclusive_group()
     precomputed_group.add_argument('--train_backbone', default=False, action='store_true',

@@ -10,13 +10,12 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
-from torch.utils.tensorboard import SummaryWriter
 
 import utils
-from augs.augs import IMAGE_AUGMENTATIONS, EMBED_AUGMENTATIONS, AugWrapper
 import loaders
 
 from torchvision import models as torchvision_models
+from tqdm.auto import tqdm
 
 import losses
 from main_args import get_args_parser, process_args
@@ -91,29 +90,14 @@ def train_dino(args, writer):
     print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
     cudnn.benchmark = True
 
-    student, _, normalize = load_model(args, split_preprocess=True)
+    student, _ = load_model(args)
     teacher, _ = load_model(args)
-
-    if not args.precomputed:
-        aug = IMAGE_AUGMENTATIONS[args.image_aug](num_augs=args.num_augs, **args.aug_args)
-        transform = AugWrapper(
-            vit_image_size=args.vit_image_size,
-            aug_image_size=args.aug_image_size,
-            global_augs=aug,
-            normalize=normalize,
-            image_size=args.image_size
-        )
-    else:
-        aug = EMBED_AUGMENTATIONS[args.embed_aug](num_augs=args.num_augs, **args.aug_args)
-        transform = AugWrapper(
-            global_augs=aug
-        )
 
     dataset = getattr(loaders, args.loader)(
         knn_path=args.knn_path,
         datapath=args.datapath,
         k=args.knn,
-        transform=transform, dataset=args.dataset,
+        transform=None, dataset=args.dataset,
         precompute_arch=args.arch if args.precomputed else None,
         **args.loader_args)
 
@@ -135,7 +119,6 @@ def train_dino(args, writer):
 
     student_teacher_model = TeacherStudentCombo(teacher=teacher, student=student, args=args)
     # move networks to gpu
-    student_teacher_model = student_teacher_model.cuda()
     if not args.disable_ddp:
         student_teacher_model = nn.parallel.DistributedDataParallel(student_teacher_model, device_ids=[args.gpu])
 
@@ -152,11 +135,11 @@ def train_dino(args, writer):
             **args.loss_args)
     if losses.is_multihead(loss_class):
         dino_loss_args.update(num_heads=args.num_heads)
-        dino_loss = loss_class(**dino_loss_args).cuda()
+        dino_loss = loss_class(**dino_loss_args)
     elif args.num_heads == 1:
-        dino_loss = loss_class(**dino_loss_args).cuda()
+        dino_loss = loss_class(**dino_loss_args)
     else:
-        dino_loss = nn.ModuleList([loss_class(**dino_loss_args) for _ in range(args.num_heads)]).cuda()
+        dino_loss = nn.ModuleList([loss_class(**dino_loss_args) for _ in range(args.num_heads)])
 
     # ============ preparing optimizer ... ============
     params_groups = utils.get_params_groups(student_teacher_model.module.trainable_student)
@@ -206,7 +189,7 @@ def train_dino(args, writer):
 
     start_time = time.time()
     print("Starting DINO training !")
-    for epoch in range(start_epoch, args.epochs):
+    for epoch in tqdm(range(start_epoch, args.epochs)):
         if not args.disable_ddp:
             data_loader.sampler.set_epoch(epoch)
         # ============ training one epoch of DINO ... ============
@@ -248,13 +231,16 @@ def train_dino(args, writer):
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
 
+# def eval_model(student, dataloader, labels):
+#     pass
+
 
 def train_one_epoch(student_teacher_model, dino_loss, data_loader,
                     optimizer, lr_schedule, wd_schedule, momentum_schedule,epoch,
                     fp16_scaler, args, writer):
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, args.epochs)
-    for it, data in enumerate(metric_logger.log_every(data_loader, 10, header)):
+    for it, data in enumerate(data_loader):
         images, _ = data
         
         # update weight decay and learning rate according to their schedule
@@ -263,8 +249,6 @@ def train_one_epoch(student_teacher_model, dino_loss, data_loader,
             param_group["lr"] = lr_schedule[it]
             if i == 0:  # only the first group is regularized
                 param_group["weight_decay"] = wd_schedule[it]
-        # move images to gpu
-        images = [im.cuda(non_blocking=True) for im in images]
         
         # teacher and student forward passes + compute dino loss
         with torch.cuda.amp.autocast(fp16_scaler is not None):
@@ -308,7 +292,6 @@ def train_one_epoch(student_teacher_model, dino_loss, data_loader,
                 param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
 
         # logging
-        torch.cuda.synchronize()
         metric_logger.update(loss=loss.item())
         metric_logger.update_raw(head_losses=head_losses)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
@@ -377,3 +360,7 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+"""
+python train_main.py  --precomputed --arch PaSST  --batch_size=256 --use_fp16=false --max_momentum_teacher=0.996 --lr=1e-4 --warmup_epochs=20 --min_lr=1e-4 --epochs=100 --output_dir ./experiments/TEMI-output-test --dataset DCASE2018_TASK5 --out_dim=9  --num_heads=16 --loss TEMI --loss-args  beta=0.6 --embed_dim=1295
+"""

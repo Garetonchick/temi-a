@@ -133,7 +133,7 @@ class FeatureExtractionPipeline:
         self.embeds = None
 
         self.model, transform = load_model(self.args, head=args.head)
-        self.model.cuda().eval()
+        self.model.eval()
         if not self.cache_backbone:
             self.model = nn.DataParallel(self.model)
         if args.lin_eval:
@@ -221,7 +221,7 @@ class FeatureExtractionPipeline:
     def head_features(self, embed):
         features = []
         for samples in embed:
-            samples = samples.cuda()
+            samples = samples
             features.append(self.model.head(samples).cpu())
         return torch.cat(features)
 
@@ -239,7 +239,7 @@ class FeatureExtractionPipeline:
             for samples, _ in tqdm(loader):
                 if not isinstance(samples, list):
                     samples = [samples]
-                samples = torch.cat([im.cuda(non_blocking=True) for im in samples])
+                samples = torch.cat([im for im in samples])
                 output = self.model.backbone_embed(samples)
                 embeds[k].append(output.cpu())
         self.embeds = embeds

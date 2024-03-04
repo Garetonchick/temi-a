@@ -162,26 +162,6 @@ class MultiHeadClassifier(nn.Module):
             x = torch.cat(x)
         return (x - self.embed_mean) / self.embed_std
 
-    def backbone_embed(self, x):
-        # convert to list
-        if not isinstance(x, list):
-            x = [x]
-        shapes_sorted, sort_idx = torch.sort(torch.Tensor([inp.shape[-1] for inp in x]))
-        idx_crops = torch.cumsum(torch.unique_consecutive(shapes_sorted, return_counts=True)[1], 0)
-        start_idx = 0
-        output = torch.empty((len(x), len(x[0]), self.embed_dim), device=x[0].device)
-        for end_idx in idx_crops:
-            batch_idx = sort_idx[start_idx:end_idx]  # The indices of tensors of this shape
-            _in_batched = torch.cat([x[i] for i in batch_idx])  # Batch them together
-            _out = self.backbone(_in_batched.type(self.dtype)).float()
-
-            # accumulate outputs
-            _out = torch.stack(_out.chunk(len(batch_idx)))
-            output.index_copy_(0, batch_idx.cuda(), _out)
-            start_idx = end_idx
-        output = torch.cat(torch.unbind(output))
-        return (output - self.embed_mean) / self.embed_std
-
     def apply_head(self, embedded):
         if self.l2_norm:
             embedded /= embedded.norm(dim=-1, keepdim=True)

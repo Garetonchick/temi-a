@@ -1,7 +1,6 @@
 import glob
 from functools import partial
 import pandas as pd
-from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 from eval_cluster_utils import *
 
 
@@ -93,49 +92,14 @@ def main():
         ( _ , max_indices) = torch.max(test_features, dim=1)
         max_indices = max_indices.cpu().numpy()
         cluster_acc, nmi, anmi, ari = utils.compute_metrics(val_labels, max_indices, min_samples_per_class=5)
-
-        cluster_results["cluster_acc"].append(cluster_acc)
-        cluster_results["nmi"].append(nmi)
-        cluster_results["anmi"].append(anmi)
-        cluster_results["ari"].append(ari)
-
-        # Cluster performance train
-        ( _ , max_indices) = torch.max(train_features, dim=1)
-        max_indices = max_indices.cpu().numpy()
-        cluster_acc, nmi, anmi, ari = utils.compute_metrics(train_labels, max_indices, min_samples_per_class=5)
-
-        cluster_results["cluster_acc-train"].append(cluster_acc)
-        cluster_results["nmi-train"].append(nmi)
-        cluster_results["anmi-train"].append(anmi)
-        cluster_results["ari-train"].append(ari)
-
-        # Loss
-        # if epoch in losses_df.index:
-        #     train_loss = losses_df.loc[epoch].item()
-        #     loss_results["train_loss"].append(train_loss)
-        # else:
-        #     loss_results["train_loss"].append(np.nan)
+        print(f'acc={cluster_acc}, nmi={nmi}')
 
         print('\n', '-'*100, '\n')
-
-        dict_data = {
-                    "cluster_val_acc" : np.max(cluster_results["cluster_acc"]),
-                    "NMI" : np.max(cluster_results["nmi"]),
-                    "ARI" : np.max(cluster_results["ari"]),
-                    "ckpt-best-cluster-acc": checkpoint_list[np.argmax(cluster_results["cluster_acc"])],
-                    }
-        cluster_results.update(loss_results)
-        df = pd.DataFrame(cluster_results, index=epochs)
-        df.index.name = "Epoch"
-        print(df[["cluster_acc",
-                "nmi",
-                "ari"
-                ]])
-    with open(outdir / "best-results.json", 'w') as f:
-        json.dump(dict_data, f, indent=4)
-    
-    df.to_csv(outdir / "checkpoint_metrics.csv")
 
 
 if __name__ == '__main__':
     main()
+
+"""
+python eval_experiment.py --ckpt_folder ./experiments/TEMI-output-test
+"""
