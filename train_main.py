@@ -2,6 +2,7 @@ import os
 import sys
 import datetime
 import time
+import wandb
 
 import math
 import json
@@ -10,6 +11,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
+import numpy as np
 
 import utils
 import loaders
@@ -20,7 +22,34 @@ from tqdm.auto import tqdm
 import losses
 from main_args import get_args_parser, process_args
 from model_builders import load_model
+from metrics import accuracy_with_reassignment, nmi_geom, standartify_clusters
 
+def load_labels(labels_path):
+    labels = None
+    with open(labels_path, 'rb') as f:
+        labels = np.load(f)
+    
+    ld = {label: i for i, label in enumerate(set(labels))} 
+    return np.array([ld[label] for label in labels])
+
+@torch.no_grad()
+def predict_labels(teachers, teacher_idx, embeds, batch_size):
+    n_batches = (embeds.shape[0] + batch_size - 1) // batch_size
+    labels = []
+
+    for i in range(n_batches):
+        batch = embeds[i * batch_size: (i + 1)*batch_size]
+        probs = teachers.heads[teacher_idx](batch)
+        labels.extend(list(torch.argmax(probs, dim=1)))
+    
+    return np.array(labels)
+
+@torch.no_grad()
+def eval_head(teachers, teacher_idx, embeds, labels, batch_size):
+    pseudo_labels = standartify_clusters(predict_labels(teachers, teacher_idx, embeds, batch_size))
+    acc = accuracy_with_reassignment(labels, pseudo_labels)
+    nmi = nmi_geom(labels, pseudo_labels)
+    return acc, nmi
 
 class TeacherStudentCombo(nn.Module):
 
@@ -81,6 +110,8 @@ class TeacherStudentCombo(nn.Module):
 
 
 def train_dino(args, writer):
+    labels = load_labels(os.path.join("data", f"{args.dataset}-{args.arch}", "labels.npy"))
+
     if not args.disable_ddp:
         utils.init_distributed_mode(args)
     if args.batch_size is not None:
@@ -193,9 +224,39 @@ def train_dino(args, writer):
         if not args.disable_ddp:
             data_loader.sampler.set_epoch(epoch)
         # ============ training one epoch of DINO ... ============
-        train_stats = train_one_epoch(student_teacher_model, dino_loss,
+        rlosses = train_one_epoch(student_teacher_model, dino_loss,
             data_loader, optimizer, lr_schedule, wd_schedule, momentum_schedule,
-            epoch, fp16_scaler, args, writer)
+            epoch, fp16_scaler, args, writer, labels=labels)
+        
+        best_head_idx = student_teacher_model.teacher.head.best_head_idx
+        acc, nmi = eval_head(
+            teachers=student_teacher_model.teacher.head, 
+            teacher_idx=best_head_idx, 
+            embeds=data_loader.dataset.dataset.emb, 
+            labels=labels, 
+            batch_size=args.batch_size
+        )
+        print(f"Best head {best_head_idx}, acc={acc}, NMI={nmi}")
+
+        log = {
+            'epoch': epoch
+        }
+        
+        for i in range(args.num_heads):
+            acc, nmi = eval_head(
+                teachers=student_teacher_model.teacher.head, 
+                teacher_idx=i, 
+                embeds=data_loader.dataset.dataset.emb, 
+                labels=labels, 
+                batch_size=args.batch_size
+            )
+            print(f"Head {i}, acc={acc}, NMI={nmi}")
+            log.update({
+                f'loss_head_{i}': rlosses[i],
+                f'accuracy_head_{i}': acc,
+                f'NMI_head_{i}': nmi
+            })
+        wandb.log(log)
 
         # ============ writing logs ... ============
         save_dict = {
@@ -211,37 +272,36 @@ def train_dino(args, writer):
         utils.save_on_master(save_dict, os.path.join(args.output_dir, 'checkpoint.pth'))
         if args.saveckp_freq and epoch % args.saveckp_freq == 0:
             utils.save_on_master(save_dict, os.path.join(args.output_dir, f'checkpoint{epoch:04}.pth'))
-        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                     'epoch': epoch}
-        if utils.is_main_process():
-            with (Path(args.output_dir) / "log.txt").open("a") as f:
-                f.write(json.dumps(log_stats) + "\n")
+        # log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+        #              'epoch': epoch}
+        # if utils.is_main_process():
+        #     with (Path(args.output_dir) / "log.txt").open("a") as f:
+        #         f.write(json.dumps(log_stats) + "\n")
 
-        try:       
-            torch.set_printoptions(profile="full")
-            if epoch % 10 == 0:
-                d_loss = dino_loss[0] if hasattr(dino_loss, "__getitem__") else dino_loss
-                print("highest probs:", torch.topk(d_loss.probs_pos * 100, 50)[0])
-                print("lowest probs:", torch.topk(d_loss.probs_pos * 100, 50, largest=False)[0])
-            torch.set_printoptions(profile="default")
-        except:
-            print(" ")
+        # try:       
+        #     torch.set_printoptions(profile="full")
+        #     if epoch % 10 == 0:
+        #         d_loss = dino_loss[0] if hasattr(dino_loss, "__getitem__") else dino_loss
+        #         print("highest probs:", torch.topk(d_loss.probs_pos * 100, 50)[0])
+        #         print("lowest probs:", torch.topk(d_loss.probs_pos * 100, 50, largest=False)[0])
+        #     torch.set_printoptions(profile="default")
+        # except:
+        #     print(" ")
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
 
-# def eval_model(student, dataloader, labels):
-#     pass
-
-
 def train_one_epoch(student_teacher_model, dino_loss, data_loader,
                     optimizer, lr_schedule, wd_schedule, momentum_schedule,epoch,
-                    fp16_scaler, args, writer):
+                    fp16_scaler, args, writer, labels):
+    rlosses = [0] * args.num_heads
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, args.epochs)
+    n_els = 0
     for it, data in enumerate(data_loader):
         images, _ = data
+        n_els += images[0].shape[0] / 2
         
         # update weight decay and learning rate according to their schedule
         it = len(data_loader) * epoch + it  # global training iteration        
@@ -258,6 +318,7 @@ def train_one_epoch(student_teacher_model, dino_loss, data_loader,
             else:
                 head_losses = torch.stack([d(s, t, epoch=epoch) for d, s, t in zip(dino_loss, student_out, teacher_out)])
             loss = head_losses.mean()
+        rlosses = [rl + l.item() * (images[0].shape[0] / 2) for rl, l in zip(rlosses, head_losses)]
 
         if not math.isfinite(loss.item()):
             print("Loss is {}, stopping training".format(loss.item()), flush=True)
@@ -325,7 +386,7 @@ def train_one_epoch(student_teacher_model, dino_loss, data_loader,
         # if hasattr(d_loss, 'probs_pos'):
             # writer.add_histogram("p(k) over Epochs", d_loss.probs_pos, epoch)
     print("Averaged stats:", metric_logger)
-    return {k: meter.global_avg for k, meter in metric_logger.scalar_meters.items()}
+    return [l / n_els for l in rlosses] 
 
 
 def default_out_dir(loss, dset):
@@ -355,7 +416,12 @@ def main():
     #     writer = SummaryWriter(args.output_dir)
     with open(os.path.join(args.output_dir, "hp.json"), 'wt') as f:
         json.dump(vars(args), f, indent=4, default=str)
+    wandb.init(
+        project="temi-a",
+        config=args
+    )
     train_dino(args, writer)
+    wandb.finish()
 
 
 if __name__ == '__main__':
