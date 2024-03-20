@@ -24,6 +24,18 @@ from main_args import get_args_parser, process_args
 from model_builders import load_model
 from metrics import accuracy_with_reassignment, nmi_geom, standartify_clusters
 
+def gen_head_embeds(best_teacher_head, embeds, outdir, batch_size):
+    n_batches = (embeds.shape[0] + batch_size - 1) // batch_size
+    head_embeds = []
+
+    for i in range(n_batches):
+        batch = embeds[i * batch_size: (i + 1)*batch_size]
+        head_embed = best_teacher_head.head_embed(batch)
+        head_embeds.append(head_embed)
+    
+    head_embeds = torch.cat(head_embeds) 
+    torch.save(head_embeds, os.path.join(outdir, "head_embeds.pth"))
+
 def load_labels(labels_path):
     labels = None
     with open(labels_path, 'rb') as f:
@@ -258,6 +270,7 @@ def train_dino(args, writer):
             })
         wandb.log(log)
 
+
         # ============ writing logs ... ============
         save_dict = {
             'student': student_teacher_model.module.student_dict(),
@@ -272,21 +285,27 @@ def train_dino(args, writer):
         utils.save_on_master(save_dict, os.path.join(args.output_dir, 'checkpoint.pth'))
         if args.saveckp_freq and epoch % args.saveckp_freq == 0:
             utils.save_on_master(save_dict, os.path.join(args.output_dir, f'checkpoint{epoch:04}.pth'))
-        # log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-        #              'epoch': epoch}
-        # if utils.is_main_process():
-        #     with (Path(args.output_dir) / "log.txt").open("a") as f:
-        #         f.write(json.dumps(log_stats) + "\n")
 
-        # try:       
-        #     torch.set_printoptions(profile="full")
-        #     if epoch % 10 == 0:
-        #         d_loss = dino_loss[0] if hasattr(dino_loss, "__getitem__") else dino_loss
-        #         print("highest probs:", torch.topk(d_loss.probs_pos * 100, 50)[0])
-        #         print("lowest probs:", torch.topk(d_loss.probs_pos * 100, 50, largest=False)[0])
-        #     torch.set_printoptions(profile="default")
-        # except:
-        #     print(" ")
+    for i in range(args.num_heads):
+        acc, nmi = eval_head(
+            teachers=student_teacher_model.teacher.head, 
+            teacher_idx=i, 
+            embeds=data_loader.dataset.dataset.emb, 
+            labels=labels, 
+            batch_size=args.batch_size
+        )
+        print(f"Head {i}, acc={acc}, NMI={nmi}")
+    
+    print(f"Best head idx: {student_teacher_model.teacher.head.best_head_idx}")
+    
+    # Gen head embeds
+    print("Gen head embeds")
+    gen_head_embeds(
+        best_teacher_head=student_teacher_model.teacher.head.best_head, 
+        embeds=data_loader.dataset.dataset.emb,
+        outdir=args.output_dir,
+        batch_size=args.batch_size
+    )
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

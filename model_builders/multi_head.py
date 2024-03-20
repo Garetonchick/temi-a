@@ -55,6 +55,9 @@ class DINOHead(nn.Module):
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
+    def head_embed(self, x):
+        return self.mlp(x)
+
     def forward(self, x):
         x = self.mlp(x)
         x = nn.functional.normalize(x, dim=-1, p=2)
@@ -77,6 +80,9 @@ class MultiHead(nn.Module):
     @property
     def best_head(self):
         return self.heads[self.best_head_idx]
+
+    def head_embed(self, x, idx):
+        return self.heads[idx].head_embed(x)
 
     def set_losses(self, losses):
         """losses should be (num_heads,) tensor"""
