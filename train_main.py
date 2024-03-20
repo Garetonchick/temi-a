@@ -24,6 +24,8 @@ from main_args import get_args_parser, process_args
 from model_builders import load_model
 from metrics import accuracy_with_reassignment, nmi_geom, standartify_clusters
 
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+
 def gen_head_embeds(best_teacher_head, embeds, outdir, batch_size):
     n_batches = (embeds.shape[0] + batch_size - 1) // batch_size
     head_embeds = []
@@ -50,9 +52,9 @@ def predict_labels(teachers, teacher_idx, embeds, batch_size):
     labels = []
 
     for i in range(n_batches):
-        batch = embeds[i * batch_size: (i + 1)*batch_size]
+        batch = embeds[i * batch_size: (i + 1)*batch_size].to(DEVICE)
         probs = teachers.heads[teacher_idx](batch)
-        labels.extend(list(torch.argmax(probs, dim=1)))
+        labels.extend(list(torch.argmax(probs, dim=1).cpu()))
     
     return np.array(labels)
 
@@ -135,6 +137,8 @@ def train_dino(args, writer):
 
     student, _ = load_model(args)
     teacher, _ = load_model(args)
+    student = student.to(DEVICE)
+    teacher = teacher.to(DEVICE)
 
     dataset = getattr(loaders, args.loader)(
         knn_path=args.knn_path,
@@ -183,6 +187,8 @@ def train_dino(args, writer):
         dino_loss = loss_class(**dino_loss_args)
     else:
         dino_loss = nn.ModuleList([loss_class(**dino_loss_args) for _ in range(args.num_heads)])
+    
+    dino_loss = dino_loss.to(DEVICE)
 
     # ============ preparing optimizer ... ============
     params_groups = utils.get_params_groups(student_teacher_model.module.trainable_student)
@@ -320,6 +326,7 @@ def train_one_epoch(student_teacher_model, dino_loss, data_loader,
     n_els = 0
     for it, data in enumerate(data_loader):
         images, _ = data
+        images = [img.to(DEVICE) for img in images]
         n_els += images[0].shape[0] / 2
         
         # update weight decay and learning rate according to their schedule
