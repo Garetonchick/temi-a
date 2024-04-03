@@ -65,6 +65,11 @@ def eval_head(teachers, teacher_idx, embeds, labels, batch_size):
     nmi = nmi_geom(labels, pseudo_labels)
     return acc, nmi
 
+@torch.no_grad()
+def save_predictions(teachers, teacher_idx, embeds, batch_size, out):
+    predictions = standartify_clusters(predict_labels(teachers, teacher_idx, embeds, batch_size))
+    torch.save(torch.from_numpy(predictions), os.path.join(out, 'predictions.pth'))
+
 class TeacherStudentCombo(nn.Module):
 
     def __init__(self, student, teacher, args):
@@ -311,6 +316,14 @@ def train_dino(args, writer):
         embeds=data_loader.dataset.dataset.emb,
         outdir=args.output_dir,
         batch_size=args.batch_size
+    )
+    print("Save predictions")
+    save_predictions(
+        teachers=student_teacher_model.teacher.head, 
+        teacher_idx=student_teacher_model.teacher.head.best_head_idx, 
+        embeds=data_loader.dataset.dataset.emb, 
+        batch_size=args.batch_size, 
+        out=args.output_dir
     )
 
     total_time = time.time() - start_time
