@@ -13,6 +13,7 @@ from eval_cluster_utils import knn_classifier
 from loaders import get_dataset
 from model_builders import load_model
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 @torch.no_grad()
 def compute_embedding(model, loader):
@@ -29,7 +30,7 @@ def compute_embedding(model, loader):
 def compute_neighbors(embedding, k):
     embedding = embedding / embedding.norm(p=2, dim=-1, keepdim=True)
     num_embeds = embedding.shape[0]
-    if num_embeds <= 8*1e4:
+    if num_embeds <= 8*1e3:
         dists = embedding @ embedding.permute(1, 0)
         # exclude self-similarity
         dists.fill_diagonal_(-torch.inf)
@@ -40,7 +41,7 @@ def compute_neighbors(embedding, k):
         print("Chunk-wise implementation of k-nn in GPU")
         # num_chunks = 12000 
         step_size = 64 # num_embeds // num_chunks
-        embedding = embedding.cuda()
+        embedding = embedding.to(DEVICE)
         for idx in tqdm(range(0, num_embeds, step_size)):
             idx_next_chunk = min((idx + step_size), num_embeds)
             features = embedding[idx : idx_next_chunk, :]
