@@ -31,12 +31,12 @@ def gen_head_embeds(best_teacher_head, embeds, outdir, batch_size):
     head_embeds = []
 
     for i in range(n_batches):
-        batch = embeds[i * batch_size: (i + 1)*batch_size]
+        batch = embeds[i * batch_size: (i + 1)*batch_size].to(DEVICE)
         head_embed = best_teacher_head.head_embed(batch)
         head_embeds.append(head_embed)
     
     head_embeds = torch.cat(head_embeds) 
-    torch.save(head_embeds, os.path.join(outdir, "head_embeds.pth"))
+    torch.save(head_embeds.cpu(), os.path.join(outdir, "head_embeds.pth"))
 
 def load_labels(labels_path):
     labels = None
